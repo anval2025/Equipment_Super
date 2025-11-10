@@ -34,7 +34,7 @@ def mostrar_disponibilidad(df_equipos, tipo_equipo, titulo):
         st.info("No hay grúas de este tipo.")
     else:
         locations = df_gruas["LOCATION"].unique()
-        for i, loc in enumerate(locations):  # índice para key único
+        for i, loc in enumerate(locations):
             st.markdown(f"### Ubicación: {loc}")
             df_loc = df_gruas[df_gruas["LOCATION"] == loc]
 
@@ -44,12 +44,11 @@ def mostrar_disponibilidad(df_equipos, tipo_equipo, titulo):
             texto_central = f"{disponibles} / {total}"
             font_size = 20
 
-            # Gráfico donut con key único
             fig = go.Figure(data=[go.Pie(
                 labels=conteo_status.index,
                 values=conteo_status.values,
                 hole=0.5,
-                marker_colors=["#5DADE2", "#D3D3D3"],  # azul claro y gris claro
+                marker_colors=["#5DADE2", "#D3D3D3"],
                 textinfo='percent',
                 insidetextorientation='radial',
                 insidetextfont=dict(size=font_size, color="black")
@@ -60,7 +59,6 @@ def mostrar_disponibilidad(df_equipos, tipo_equipo, titulo):
             )
             st.plotly_chart(fig, use_container_width=True, key=f"{tipo_equipo}_{loc}_{i}")
 
-            # Lista de grúas en un expander
             with st.expander(f"Lista de grúas en {loc}"):
                 df_loc_display = df_loc[["EQUIPO", "STATUS", "OBSERVACIONES"]].copy()
                 df_loc_display.insert(0, "No.", range(1, len(df_loc_display) + 1))
@@ -72,32 +70,18 @@ def app_admin():
     df_equipos = pd.read_sql_query("SELECT * FROM equipos", conn)
     df_historial = pd.read_sql_query("SELECT * FROM cambios_status", conn)
 
-    # --- MENÚ LATERAL ---
     st.sidebar.title("📂 Menú")
 
-    # Inicializamos modo de vista
     if "vista" not in st.session_state:
         st.session_state["vista"] = "tabla"
 
-
-    # Botón para volver a tabla
-    if st.sidebar.button("✏️ Equipos"):
-        st.session_state["vista"] = "tabla"        
-
-    # Botones de disponibilidad
-    if st.sidebar.button("📊 Disponibilidad RS"):
-        st.session_state["vista"] = "disponibilidad_rs"
-    if st.sidebar.button("📊 Disponibilidad RTG"):
-        st.session_state["vista"] = "disponibilidad_rtg"
-    if st.sidebar.button("📊 Disponibilidad GP"):
-        st.session_state["vista"] = "disponibilidad_gp"
-    if st.sidebar.button("📊 Disponibilidad EH"):
-        st.session_state["vista"] = "disponibilidad_eh"
-        
-    if st.sidebar.button("📜 Historial"):
-        st.session_state["vista"] = "historial"
-
-
+    # Botones menú lateral
+    if st.sidebar.button("✏️ Equipos"): st.session_state["vista"] = "tabla"
+    if st.sidebar.button("📊 Disponibilidad QC"): st.session_state["vista"] = "disponibilidad_gp"
+    if st.sidebar.button("📊 Disponibilidad RS"): st.session_state["vista"] = "disponibilidad_rs"
+    if st.sidebar.button("📊 Disponibilidad RTG"): st.session_state["vista"] = "disponibilidad_rtg"
+    if st.sidebar.button("📊 Disponibilidad EH"): st.session_state["vista"] = "disponibilidad_eh"
+    if st.sidebar.button("📜 Historial"): st.session_state["vista"] = "historial"
 
     # --- VISTAS ---
     if st.session_state["vista"] == "disponibilidad_rs":
@@ -112,7 +96,6 @@ def app_admin():
         st.subheader("Historial de cambios de STATUS")
         df_historial = pd.read_sql_query("SELECT * FROM cambios_status", conn)
 
-        # --- Filtro por todas las columnas ---
         filtro = st.text_input("🔍 Buscar en todas las columnas")
         df_filtrado = df_historial.copy()
         if filtro:
@@ -122,8 +105,8 @@ def app_admin():
             df_filtrado = df_filtrado[mask]
 
         st.data_editor(df_filtrado, use_container_width=True, hide_index=False)
+
     elif st.session_state["vista"] == "tabla":
-        # --- TABLA EQUIPOS ---
         st.write("### 🧾 Tabla de equipos (editable, solo ID no editable)")
         search_text = st.text_input("🔍 Buscar en todas las columnas")
         df_filtered = df_equipos.copy()
@@ -133,24 +116,30 @@ def app_admin():
                 mask = mask | df_filtered[col].astype(str).str.contains(search_text, case=False, na=False)
             df_filtered = df_filtered[mask]
 
+        # --- Configuración de columnas ---
         column_config_dict = {}
         for col in df_filtered.columns:
             if col == "ID":
                 column_config_dict[col] = st.column_config.TextColumn(col, disabled=True)
             elif col == "STATUS":
-                column_config_dict[col] = st.column_config.SelectboxColumn(
-                    "Status",
-                    options=["DISPONIBLE", "NO DISPONIBLE"],
-                    width=150
+                # Checkbox toggle para STATUS
+                df_filtered["STATUS"] = df_filtered["STATUS"].apply(lambda x: True if x=="DISPONIBLE" else False)
+                column_config_dict[col] = st.column_config.CheckboxColumn(
+                    "Disponible",
+                    help="Marcado → DISPONIBLE, No marcado → NO DISPONIBLE",
+                    width=120
                 )
 
+        # Mostrar tabla editable
         edited_df = st.data_editor(
             df_filtered,
+            column_config=column_config_dict,
             use_container_width=True,
-            hide_index=True,
-            key="equipos_editor",
-            column_config=column_config_dict
+            hide_index=True
         )
+
+        # Convertimos checkbox a DISPONIBLE/NO DISPONIBLE
+        edited_df["STATUS"] = edited_df["STATUS"].apply(lambda x: "DISPONIBLE" if x else "NO DISPONIBLE")
 
         if st.button("💾 Guardar cambios"):
             cambios_realizados = 0
@@ -158,16 +147,18 @@ def app_admin():
                 equipo_id = row_new["ID"]
                 row_old = df_equipos[df_equipos["ID"] == equipo_id].iloc[0]
 
+                # Guardar cambios de otras columnas
                 update_cols = []
                 update_vals = []
                 for col in df_equipos.columns:
-                    if col != "ID" and str(row_new[col]) != str(row_old[col]):
+                    if col != "ID" and col != "STATUS" and str(row_new[col]) != str(row_old[col]):
                         update_cols.append(f"{col} = ?")
                         update_vals.append(row_new[col])
                 if update_cols:
                     update_vals.append(equipo_id)
                     conn.execute(f"UPDATE equipos SET {', '.join(update_cols)} WHERE ID = ?", update_vals)
 
+                # Guardar cambios de STATUS
                 old_status = str(row_old["STATUS"]).strip().upper()
                 new_status = str(row_new["STATUS"]).strip().upper()
                 if old_status != new_status:
@@ -178,6 +169,8 @@ def app_admin():
                         INSERT INTO cambios_status ({", ".join(columnas_status)}, FECHA_CAMBIO)
                         VALUES ({", ".join(["?"]*len(valores_status))})
                     """, valores_status)
+                    # Actualizar en tabla principal
+                    conn.execute("UPDATE equipos SET STATUS = ? WHERE ID = ?", (new_status, equipo_id))
                     cambios_realizados += 1
 
             conn.commit()
